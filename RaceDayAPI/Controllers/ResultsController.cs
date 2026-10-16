@@ -1,0 +1,14 @@
+using Microsoft.AspNetCore.Authorization; using Microsoft.AspNetCore.Mvc; using Microsoft.EntityFrameworkCore; using RaceDayAPI.Data; using RaceDayAPI.Models;
+namespace RaceDayAPI.Controllers;
+[ApiController, Route("api/results")]
+public class ResultsController : ControllerBase
+{
+    private readonly RaceDayDbContext _db; public ResultsController(RaceDayDbContext db) => _db = db;
+    [HttpGet] public async Task<IActionResult> GetAll() => Ok(await _db.Results.AsNoTracking().OrderBy(x => x.ResultID).ToListAsync());
+    [HttpGet("{id:int}")] public async Task<IActionResult> Get(int id) { var x = await _db.Results.AsNoTracking().FirstOrDefaultAsync(r => r.ResultID == id); return x == null ? NotFound() : Ok(x); }
+    [HttpGet("/api/events/{eventId:int}/results")] public async Task<IActionResult> GetForEvent(int eventId) { if (!await _db.Events.AnyAsync(e => e.EventID == eventId)) return NotFound("Event not found."); return Ok(await (from r in _db.Results join en in _db.Enrollments on r.EnrollmentID equals en.EnrollmentID where en.EventID == eventId orderby r.Position select r).AsNoTracking().ToListAsync()); }
+    public record ResultRequest(int EnrollmentID, TimeSpan? FinishTime, int? Position, string ResultStatus);
+    [HttpPost, Authorize(Roles = "Organiser")] public async Task<IActionResult> Create(ResultRequest r) { if (!await _db.Enrollments.AnyAsync(e => e.EnrollmentID == r.EnrollmentID)) return BadRequest("EnrollmentID does not exist."); if (r.Position is <= 0) return BadRequest("Position must be positive."); if (!new[] { "Pending", "Completed", "Disqualified" }.Contains(r.ResultStatus)) return BadRequest("ResultStatus must be Pending, Completed or Disqualified."); var x = new RaceResult { EnrollmentID = r.EnrollmentID, FinishTime = r.FinishTime, Position = r.Position, ResultStatus = r.ResultStatus }; _db.Results.Add(x); await _db.SaveChangesAsync(); return CreatedAtAction(nameof(Get), new { id = x.ResultID }, x); }
+    [HttpPut("{id:int}"), Authorize(Roles = "Organiser")] public async Task<IActionResult> Update(int id, ResultRequest r) { var x = await _db.Results.FindAsync(id); if (x == null) return NotFound(); if (!await _db.Enrollments.AnyAsync(e => e.EnrollmentID == r.EnrollmentID)) return BadRequest("EnrollmentID does not exist."); if (r.Position is <= 0) return BadRequest("Position must be positive."); if (!new[] { "Pending", "Completed", "Disqualified" }.Contains(r.ResultStatus)) return BadRequest("Invalid ResultStatus."); x.EnrollmentID = r.EnrollmentID; x.FinishTime = r.FinishTime; x.Position = r.Position; x.ResultStatus = r.ResultStatus; await _db.SaveChangesAsync(); return Ok(x); }
+    [HttpDelete("{id:int}"), Authorize(Roles = "Organiser")] public async Task<IActionResult> Delete(int id) { var x = await _db.Results.FindAsync(id); if (x == null) return NotFound(); _db.Results.Remove(x); await _db.SaveChangesAsync(); return NoContent(); }
+}

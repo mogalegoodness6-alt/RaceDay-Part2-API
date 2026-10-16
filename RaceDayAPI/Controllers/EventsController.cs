@@ -1,0 +1,13 @@
+using System.Security.Claims; using Microsoft.AspNetCore.Authorization; using Microsoft.AspNetCore.Mvc; using Microsoft.EntityFrameworkCore; using RaceDayAPI.Data; using RaceDayAPI.Models;
+namespace RaceDayAPI.Controllers;
+[ApiController, Route("api/events")]
+public class EventsController : ControllerBase
+{
+    private readonly RaceDayDbContext _db; public EventsController(RaceDayDbContext db) => _db = db;
+    [HttpGet] public async Task<IActionResult> GetAll() => Ok(await _db.Events.AsNoTracking().OrderBy(x => x.EventDate).ToListAsync());
+    [HttpGet("{id:int}")] public async Task<IActionResult> Get(int id) { var x = await _db.Events.AsNoTracking().FirstOrDefaultAsync(e => e.EventID == id); return x == null ? NotFound() : Ok(x); }
+    public record EventRequest(string EventName, DateTime EventDate, string Location, string? Status);
+    [HttpPost, Authorize(Roles = "Organiser")] public async Task<IActionResult> Create(EventRequest r) { if (string.IsNullOrWhiteSpace(r.EventName) || string.IsNullOrWhiteSpace(r.Location)) return BadRequest("Event name and location are required."); if (!int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid)) return Unauthorized(); var x = new RaceEvent { OrganizerID = uid, EventName = r.EventName.Trim(), EventDate = r.EventDate.Date, Location = r.Location.Trim(), Status = string.IsNullOrWhiteSpace(r.Status) ? "Upcoming" : r.Status.Trim() }; _db.Events.Add(x); await _db.SaveChangesAsync(); return CreatedAtAction(nameof(Get), new { id = x.EventID }, x); }
+    [HttpPut("{id:int}"), Authorize(Roles = "Organiser")] public async Task<IActionResult> Update(int id, EventRequest r) { var x = await _db.Events.FindAsync(id); if (x == null) return NotFound(); if (string.IsNullOrWhiteSpace(r.EventName) || string.IsNullOrWhiteSpace(r.Location)) return BadRequest("Event name and location are required."); x.EventName = r.EventName.Trim(); x.EventDate = r.EventDate.Date; x.Location = r.Location.Trim(); if (!string.IsNullOrWhiteSpace(r.Status)) x.Status = r.Status.Trim(); await _db.SaveChangesAsync(); return Ok(x); }
+    [HttpDelete("{id:int}"), Authorize(Roles = "Organiser")] public async Task<IActionResult> Delete(int id) { var x = await _db.Events.FindAsync(id); if (x == null) return NotFound(); if (await _db.Enrollments.AnyAsync(e => e.EventID == id) || await _db.Routes.AnyAsync(e => e.EventID == id) || await _db.Weather.AnyAsync(e => e.EventID == id) || await _db.EventCategories.AnyAsync(e => e.EventID == id)) return Conflict("This event has related records. Remove its related records first."); _db.Events.Remove(x); await _db.SaveChangesAsync(); return NoContent(); }
+}
